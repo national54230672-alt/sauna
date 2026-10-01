@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Private Sauna - 混雑状況ディスプレイ</title>
+<!-- Firebase Auth と Database の読み込み -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<style>
+  /* 基本設定 */
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Kaku Gothic ProN", sans-serif;
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    transition: background-color 1s ease;
+  }
+
+  /* 16:9 の固定フレーム */
+  .display-container {
+    position: relative;
+    width: 100vw;
+    height: 56.25vw;
+    max-height: 100vh;
+    max-width: 177.78vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* メインの看板ボード共通 */
+  .board {
+    border-radius: 2.5vw;
+    padding: 5vw 8vw;
+    text-align: center;
+    position: relative;
+    z-index: 10;
+    backdrop-filter: blur(10px);
+    transition: all 0.8s ease;
+    width: 65%;
+  }
+
+  .label-top {
+    font-size: 1.2vw;
+    letter-spacing: 0.4vw;
+    text-transform: uppercase;
+    margin-bottom: 2vw;
+    transition: color 0.5s ease;
+  }
+
+  /* ステータス見出し：より見やすい極太文字に変更 */
+  #status-text {
+    font-size: 6.5vw;
+    font-weight: 800;
+    letter-spacing: 0.2vw;
+    margin: 0 0 2.5vw 0;
+    transition: all 0.5s ease;
+  }
+
+  .count-box {
+    font-size: 1.5vw;
+    border-top: 1px solid;
+    padding-top: 2vw;
+    letter-spacing: 0.2vw;
+    transition: all 0.5s ease;
+  }
+  #current-count {
+    font-size: 2.8vw;
+    font-weight: bold;
+    margin-left: 0.5vw;
+  }
+
+  .brand-footer {
+    position: absolute;
+    bottom: 4%;
+    font-size: 1vw;
+    letter-spacing: 0.4vw;
+    text-transform: uppercase;
+    transition: color 0.5s ease;
+  }
+
+  /* 画面隅のログインボタン（普段は控えめに配置） */
+  .login-trigger {
+    position: absolute;
+    top: 3%; right: 3%;
+    background: none; border: none; cursor: pointer;
+    font-size: 1vw; opacity: 0.3; transition: opacity 0.3s;
+    z-index: 100;
+  }
+  .login-trigger:hover { opacity: 1; }
+
+  /* ログインモーダル画面 */
+  #login-modal {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center;
+  }
+  .login-box {
+    background: #fff; padding: 30px; border-radius: 12px; width: 320px; text-align: center; color: #333;
+  }
+  .login-input { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+  .btn-login { width: 100%; padding: 12px; background: #007aff; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; }
+
+
+  /* ==========================================
+     ▼ ライト調テーマ（5:00 〜 17:00）
+     ========================================== */
+  body.theme-light { background-color: #f4f6f9; }
+  body.theme-light .board {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2vw 5vw rgba(0, 0, 0, 0.08);
+  }
+  body.theme-light .label-top { color: #6c757d; }
+  body.theme-light .count-box { border-color: rgba(0, 0, 0, 0.08); color: #495057; }
+  body.theme-light #current-count { color: #212529; }
+  body.theme-light .brand-footer, body.theme-light .login-trigger { color: #adb5bd; }
+
+  body.theme-light.status-empty #status-text { color: #087f5b; }
+  body.theme-light.status-crowded #status-text { color: #e67700; }
+  body.theme-light.status-full #status-text { color: #c92a2a; }
+
+
+  /* ==========================================
+     ▼ ダーク調テーマ（17:00 〜 翌4:59）
+     ========================================== */
+  body.theme-dark { background-color: #030305; }
+  body.theme-dark::before {
+    content: ""; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+    background: radial-gradient(circle at 50% 30%, rgba(0, 110, 255, 0.08) 0%, transparent 60%);
+    pointer-events: none; animation: pulseGlow 8s ease-in-out infinite alternate;
+  }
+  @keyframes pulseGlow {
+    0% { transform: scale(1); opacity: 0.6; }
+    100% { transform: scale(1.1); opacity: 1; }
+  }
+
+  body.theme-dark .board {
+    background: rgba(10, 10, 15, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 2vw 5vw rgba(0, 0, 0, 0.9), inset 0 0 2vw rgba(0, 110, 255, 0.05);
+  }
+  body.theme-dark .label-top { color: #7a889b; }
+  body.theme-dark .count-box { border-color: rgba(255, 255, 255, 0.08); color: #a0aab8; }
+  body.theme-dark #current-count { color: #ffffff; }
+  body.theme-dark .brand-footer, body.theme-dark .login-trigger { color: #454d5a; }
+
+  body.theme-dark.status-empty #status-text { color: #2df8c3; text-shadow: 0 0 3vw rgba(45, 248, 195, 0.4); }
+  body.theme-dark.status-crowded #status-text { color: #ffb703; text-shadow: 0 0 3vw rgba(255, 183, 3, 0.4); }
+  body.theme-dark.status-full #status-text { color: #ff4d6d; text-shadow: 0 0 3vw rgba(255, 77, 109, 0.4); }
+</style>
+</head>
+<body class="theme-light">
+
+  <!-- 16:9 フレーム -->
+  <div class="display-container">
+    
+    <!-- 画面右上の隠しログインボタン -->
+    <button class="login-trigger" onclick="openLoginModal()">⚙️</button>
+
+    <!-- ディスプレイ本体 -->
+    <div id="status-board" class="board">
+      <div class="label-top">Current Status</div>
+      <h1 id="status-text">データ取得中...</h1>
+      <div class="count-box">
+        現在の利用人数 <span id="current-count">-</span> 名
+      </div>
+    </div>
+
+    <div class="brand-footer">Private Sauna Realtime Info</div>
+  </div>
+
+  <!-- ログイン用モーダル画面 -->
+  <div id="login-modal">
+    <div class="login-box">
+      <h3>スタッフ認証</h3>
+      <input type="email" id="modal-email" class="login-input" placeholder="メールアドレス">
+      <input type="password" id="modal-password" class="login-input" placeholder="パスワード">
+      <button class="btn-login" onclick="executeLogin()">ログイン</button>
+      <p id="login-error" style="color:red; font-size:13px; display:none; margin-top:10px;"></p>
+      <button onclick="closeLoginModal()" style="background:none; border:none; color:#888; margin-top:15px; cursor:pointer;">閉じる</button>
+    </div>
+  </div>
+
+<script>
+  // ▼ ご自身のFirebase設定（鍵）を貼り付けてください ▼
+  const firebaseConfig = {
+  apiKey: "AIzaSyCxqgXMkwbwLHPNNLjKPHivjzhW4wvMuvA",
+  authDomain: "sauna-b8931.firebaseapp.com",
+  databaseURL: "https://sauna-b8931-default-rtdb.firebaseio.com",
+  projectId: "sauna-b8931",
+  storageBucket: "sauna-b8931.firebasestorage.app",
+  messagingSenderId: "62732813314",
+  appId: "1:62732813314:web:21d8a6fc3a3c9043bb531b"
+};
+  // ▲ ここまで ▲
+
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+  const auth = firebase.auth();
+  const db = firebase.database();
+
+  const countRef = db.ref('sauna/currentPeople');
+  const settingsRef = db.ref('sauna/settings');
+
+  let currentPeople = 0;
+  let limitCrowded = 15;
+  let limitFull = 30;
+
+  // 時間帯によるテーマ自動切り替え
+  function checkTimeAndApplyTheme() {
+    const currentHour = new Date().getHours();
+    const body = document.body;
+    if (currentHour >= 5 && currentHour < 17) {
+      body.classList.remove('theme-dark');
+      body.classList.add('theme-light');
+    } else {
+      body.classList.remove('theme-light');
+      body.classList.add('theme-dark');
+    }
+  }
+  checkTimeAndApplyTheme();
+  setInterval(checkTimeAndApplyTheme, 60000);
+
+  // リアルタイムデータ同期
+  settingsRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      limitCrowded = data.limitCrowded || 15;
+      limitFull = data.limitFull || 30;
+    }
+    updateDisplay();
+  });
+
+  countRef.on('value', (snapshot) => {
+    currentPeople = snapshot.val() || 0;
+    document.getElementById('current-count').innerText = currentPeople;
+    updateDisplay();
+  });
+
+  function updateDisplay() {
+    const body = document.body;
+    const text = document.getElementById('status-text');
+
+    body.classList.remove('status-empty', 'status-crowded', 'status-full');
+
+    if (currentPeople >= limitFull) {
+      text.innerText = "満室";
+      body.classList.add('status-full');
+    } else if (currentPeople >= limitCrowded) {
+      text.innerText = "やや混雑";
+      body.classList.add('status-crowded');
+    } else {
+      text.innerText = "空きあり";
+      body.classList.add('status-empty');
+    }
+  }
+
+  // ログインモーダルの操作関数
+  function openLoginModal() {
+    document.getElementById('login-modal').style.display = 'flex';
+  }
+  function closeLoginModal() {
+    document.getElementById('login-modal').style.display = 'none';
+  }
+
+  function executeLogin() {
+    const email = document.getElementById('modal-email').value;
+    const pass = document.getElementById('modal-password').value;
+    const err = document.getElementById('login-error');
+
+    auth.signInWithEmailAndPassword(email, pass)
+      .then(() => {
+        alert("ログインに成功しました。管理画面へ移動します。");
+        // ログイン成功したら管理画面（admin.html）に飛ばすことも可能です
+        window.location.href = "admin.html"; 
+      })
+      .catch(() => {
+        err.innerText = "メールアドレスまたはパスワードが違います";
+        err.style.display = 'block';
+      });
+  }
+</script>
+</body>
+</html>

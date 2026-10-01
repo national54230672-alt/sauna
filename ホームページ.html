@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Private Sauna - 水面と青のロマンチック空間</title>
+<!-- Firebaseの読み込み -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<style>
+  /* サイト全体の基本設定（ダークテーマ） */
+  body {
+    font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+    background-color: #050508; /* 深い黒 */
+    color: #e0e0e0;
+    margin: 0;
+    padding: 0;
+    line-height: 1.6;
+  }
+  h1, h2, h3 { font-weight: normal; letter-spacing: 2px; }
+
+  /* ヒーローセクション（トップの看板部分） */
+  .hero {
+    /* 青いLEDと水面をイメージしたグラデーション背景 */
+    background: linear-gradient(135deg, #000428 0%, #004e92 100%);
+    height: 60vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::after {
+    /* 水面の波紋のような視覚効果 */
+    content: "";
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.1) 0%, transparent 60%);
+    pointer-events: none;
+  }
+  .hero-title {
+    font-size: 32px;
+    color: #fff;
+    margin-bottom: 10px;
+    text-shadow: 0 0 20px rgba(0, 168, 255, 0.8);
+  }
+  .hero-subtitle {
+    font-size: 14px;
+    color: #a0c4ff;
+  }
+
+  /* コンテンツ幅の制御 */
+  .container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 40px 20px;
+  }
+
+  /* リアルタイム混雑状況パネル */
+  .status-panel {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 30px;
+    text-align: center;
+    margin-top: -40px; /* 少しヒーローセクションに被せる */
+    position: relative;
+    z-index: 10;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    transition: all 0.5s ease;
+  }
+  .status-label { font-size: 14px; color: #888; margin-bottom: 10px; }
+  #status-text { font-size: 28px; font-weight: bold; margin: 0; }
+  
+  /* 状態ごとの色（文字と光沢） */
+  .status-empty { color: #34c759; text-shadow: 0 0 15px rgba(52, 199, 89, 0.4); }
+  .status-crowded { color: #ff9500; text-shadow: 0 0 15px rgba(255, 149, 0, 0.4); }
+  .status-full { color: #ff3b30; text-shadow: 0 0 15px rgba(255, 59, 48, 0.4); }
+
+  /* コンセプト・料金セクション */
+  .section { margin-bottom: 60px; text-align: center; }
+  .section-title {
+    font-size: 24px;
+    color: #fff;
+    margin-bottom: 30px;
+    display: inline-block;
+    border-bottom: 2px solid #004e92;
+    padding-bottom: 5px;
+  }
+  .concept-text { font-size: 15px; color: #bbb; line-height: 2; margin-bottom: 30px; }
+  
+  .price-box {
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-left: 4px solid #004e92;
+  }
+  .price-name { font-size: 18px; color: #fff; }
+  .price-value { font-size: 22px; font-weight: bold; color: #00d2ff; }
+
+  footer {
+    text-align: center; padding: 30px 20px; font-size: 12px; color: #555; border-top: 1px solid #111;
+  }
+</style>
+</head>
+<body>
+
+  <!-- ヒーローセクション -->
+  <div class="hero">
+    <h1 class="hero-title">深海に沈む、極上のととのい</h1>
+    <p class="hero-subtitle">40㎡のプライベート空間 × 青い光のゆらぎ</p>
+  </div>
+
+  <div class="container">
+    
+    <!-- リアルタイム混雑状況パネル -->
+    <div id="status-board" class="status-panel">
+      <div class="status-label">現在の店内のご案内状況（リアルタイム）</div>
+      <h2 id="status-text">データ取得中...</h2>
+    </div>
+
+    <!-- コンセプト -->
+    <div class="section" style="margin-top: 60px;">
+      <h2 class="section-title">CONCEPT</h2>
+      <p class="concept-text">
+        日常の喧騒から離れた、40平米の贅沢な貸切サウナ。<br>
+        天井に反射する水面の揺らぎと、青いLEDが織りなすダークでロマンチックな空間。<br>
+        タワー型サウナストーブでのオートロウリュ、<br>
+        専用の冷水シャワールームから、外気浴ベランダへと続く至高の導線をご堪能ください。
+      </p>
+    </div>
+
+    <!-- 料金案内 -->
+    <div class="section">
+      <h2 class="section-title">SYSTEM & PRICE</h2>
+      
+      <div class="price-box">
+        <div class="price-name">3時間コース</div>
+        <div class="price-value">1,500<span style="font-size:14px; color:#888;">円</span></div>
+      </div>
+      
+      <div class="price-box">
+        <div class="price-name">フリータイム</div>
+        <div class="price-value">3,000<span style="font-size:14px; color:#888;">円</span></div>
+      </div>
+      <p style="font-size: 13px; color: #777; text-align: left; margin-top: 10px;">※当店はご予約不要です。直接ご来店いただき、店頭の受付システムにて発券をお願いいたします。</p>
+    </div>
+
+  </div>
+
+  <footer>
+    &copy; 2026 Private Sauna. All rights reserved.
+  </footer>
+
+<script>
+  // ▼ ここにFirebase設定（const firebaseConfig = {...}）を貼り付けてください ▼
+  const firebaseConfig = {
+    apiKey: "AIzaSyCxqgXMkwbwLHPNNLjKPHivjzhW4wvMuvA",
+    authDomain: "sauna-b8931.firebaseapp.com",
+    databaseURL: "https://sauna-b8931-default-rtdb.firebaseio.com",
+    projectId: "sauna-b8931",
+    storageBucket: "sauna-b8931.firebasestorage.app",
+    messagingSenderId: "62732813314",
+    appId: "1:62732813314:web:21d8a6fc3a3c9043bb531b"
+  };
+  // ▲ ここまで ▲
+
+  // Firebaseの初期化
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+  const db = firebase.database();
+
+  const countRef = db.ref('sauna/currentPeople');
+  const settingsRef = db.ref('sauna/settings');
+
+  let currentPeople = 0;
+  let limitCrowded = 15;
+  let limitFull = 30;
+
+  // しきい値の取得
+  settingsRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      limitCrowded = data.limitCrowded || 15;
+      limitFull = data.limitFull || 30;
+    }
+    updateDisplay();
+  });
+
+  // 人数の取得
+  countRef.on('value', (snapshot) => {
+    currentPeople = snapshot.val() || 0;
+    updateDisplay();
+  });
+
+  // 画面の更新処理
+  function updateDisplay() {
+    const text = document.getElementById('status-text');
+    
+    // クラスを一度リセット
+    text.className = '';
+
+    if (currentPeople >= limitFull) {
+      text.innerText = "満員（ただいま入場制限中）";
+      text.classList.add('status-full');
+    } else if (currentPeople >= limitCrowded) {
+      text.innerText = "やや混雑（まもなく満員）";
+      text.classList.add('status-crowded');
+    } else {
+      text.innerText = "空きあり（すぐにご案内可能）";
+      text.classList.add('status-empty');
+    }
+  }
+</script>
+</body>
+</html>

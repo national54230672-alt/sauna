@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>勤怠管理アプリ</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    background-color: #f2f2f7;
+    margin: 0; padding: 20px; color: #333;
+  }
+  h1 { font-size: 22px; text-align: center; margin-bottom: 20px; }
+  h2 { font-size: 18px; margin-top: 30px; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+  
+  /* 画面切り替え用 */
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* 上部ヘッダー配置 */
+  .header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  /* ボタン共通 */
+  .btn {
+    display: block; width: 100%; padding: 15px; font-size: 18px; font-weight: bold;
+    color: white; border: none; border-radius: 10px; cursor: pointer; margin-bottom: 15px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+  .btn-emp { background-color: #fff; color: #333; text-align: left; font-size: 18px; padding: 20px; margin-bottom: 10px; }
+  .btn-add { background-color: #007aff; margin-top: 30px; }
+  .btn-in { background-color: #34c759; padding: 25px; font-size: 22px; }
+  .btn-out { background-color: #ff3b30; padding: 25px; font-size: 22px; }
+  .btn-back { background-color: transparent; color: #007aff; border: none; font-size: 16px; padding: 10px 0; cursor: pointer; }
+  .btn-del-emp { background-color: transparent; color: #ff3b30; border: none; font-size: 14px; padding: 10px 0; cursor: pointer; text-decoration: underline; }
+
+  /* 履歴リスト */
+  .record-item {
+    background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 10px;
+    display: flex; justify-content: space-between; align-items: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .record-info { font-size: 15px; }
+  .btn-edit { background-color: #8e8e93; color: white; border: none; border-radius: 5px; padding: 8px 12px; }
+
+  /* モーダル（修正画面） */
+  #edit-modal {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5); z-index: 1000;
+  }
+  .modal-content {
+    background: #fff; width: 85%; max-width: 400px; margin: 40px auto; padding: 20px;
+    border-radius: 12px; box-sizing: border-box;
+  }
+  .modal-content input {
+    width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc;
+    border-radius: 5px; font-size: 16px; box-sizing: border-box;
+  }
+  .modal-buttons { display: flex; justify-content: space-between; }
+  .btn-cancel { background-color: #8e8e93; color: white; padding: 12px; width: 48%; border: none; border-radius: 8px; }
+  .btn-save { background-color: #007aff; color: white; padding: 12px; width: 48%; border: none; border-radius: 8px; }
+  .btn-delete { background-color: transparent; color: #ff3b30; border: none; width: 100%; padding: 10px; margin-top: 15px; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+  <!-- スタッフ一覧画面 -->
+  <div id="view-list" class="view active">
+    <h1>スタッフ一覧</h1>
+    <div id="emp-list"></div>
+    <button class="btn btn-add" onclick="addEmployee()">＋ 新規スタッフを追加</button>
+  </div>
+
+  <!-- 勤怠打刻・履歴画面 -->
+  <div id="view-detail" class="view">
+    <div class="header-bar">
+      <button class="btn-back" onclick="showList()">◀ 一覧へ戻る</button>
+      <button class="btn-del-emp" onclick="deleteEmployee()">スタッフを削除</button>
+    </div>
+    
+    <h1 id="detail-name"></h1>
+    
+    <div id="action-area">
+      <button id="btn-in" class="btn btn-in" onclick="clockIn()">出勤する</button>
+      <button id="btn-out" class="btn btn-out" onclick="clockOut()" style="display: none;">退勤する</button>
+    </div>
+
+    <h2>勤怠履歴</h2>
+    <div id="record-list"></div>
+  </div>
+
+  <!-- 記録の修正モーダル -->
+  <div id="edit-modal">
+    <div class="modal-content">
+      <h3 style="text-align:center; margin-top:0;">記録の修正</h3>
+      <label>日付<input type="date" id="edit-date"></label>
+      <label>出勤時間<input type="time" id="edit-in"></label>
+      <label>退勤時間<input type="time" id="edit-out"></label>
+      <div class="modal-buttons">
+        <button class="btn-cancel" onclick="closeEdit()">キャンセル</button>
+        <button class="btn-save" onclick="saveEdit()">保存</button>
+      </div>
+      <button class="btn-delete" onclick="deleteRecord()">この記録を削除する</button>
+    </div>
+  </div>
+
+<script>
+  let employees = JSON.parse(localStorage.getItem('kintai_emps')) || [];
+  let records = JSON.parse(localStorage.getItem('kintai_recs')) || [];
+  
+  let currentEmpId = null;
+  let editingRecordId = null;
+
+  renderEmpList();
+
+  function renderEmpList() {
+    const listDiv = document.getElementById('emp-list');
+    listDiv.innerHTML = '';
+    employees.forEach(emp => {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-emp';
+      btn.innerText = emp.name;
+      btn.onclick = () => showDetail(emp.id, emp.name);
+      listDiv.appendChild(btn);
+    });
+  }
+
+  function addEmployee() {
+    const name = prompt("スタッフの名前を入力してください");
+    if (name && name.trim() !== "") {
+      const newEmp = { id: Date.now(), name: name.trim() };
+      employees.push(newEmp);
+      localStorage.setItem('kintai_emps', JSON.stringify(employees));
+      renderEmpList();
+    }
+  }
+
+  // スタッフ削除機能
+  function deleteEmployee() {
+    const emp = employees.find(e => e.id === currentEmpId);
+    if (!emp) return;
+
+    if (confirm(`「${emp.name}」さんのアカウントを削除しますか？\n※これまでの勤怠履歴もすべて消去されます。`)) {
+      // スタッフ一覧から削除
+      employees = employees.filter(e => e.id !== currentEmpId);
+      localStorage.setItem('kintai_emps', JSON.stringify(employees));
+
+      // 該当スタッフの勤怠履歴も削除
+      records = records.filter(r => r.empId !== currentEmpId);
+      localStorage.setItem('kintai_recs', JSON.stringify(records));
+
+      // 一覧画面へ戻る
+      showList();
+      renderEmpList();
+    }
+  }
+
+  function showDetail(empId, empName) {
+    currentEmpId = empId;
+    document.getElementById('detail-name').innerText = empName + " さんの勤怠";
+    
+    document.getElementById('view-list').classList.remove('active');
+    document.getElementById('view-detail').classList.add('active');
+    
+    renderRecords();
+    updateActionButtons();
+  }
+
+  function showList() {
+    currentEmpId = null;
+    document.getElementById('view-detail').classList.remove('active');
+    document.getElementById('view-list').classList.add('active');
+  }
+
+  const getToday = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  };
+  const getTime = () => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  };
+
+  function updateActionButtons() {
+    const openRecord = records.find(r => r.empId === currentEmpId && r.out === "");
+    
+    if (openRecord) {
+      document.getElementById('btn-in').style.display = 'none';
+      document.getElementById('btn-out').style.display = 'block';
+    } else {
+      document.getElementById('btn-in').style.display = 'block';
+      document.getElementById('btn-out').style.display = 'none';
+    }
+  }
+
+  function clockIn() {
+    const newRecord = {
+      id: Date.now(),
+      empId: currentEmpId,
+      date: getToday(),
+      in: getTime(),
+      out: ""
+    };
+    records.push(newRecord);
+    saveData();
+    renderRecords();
+    updateActionButtons();
+  }
+
+  function clockOut() {
+    const openRecord = records.find(r => r.empId === currentEmpId && r.out === "");
+    if (openRecord) {
+      openRecord.out = getTime();
+      saveData();
+      renderRecords();
+      updateActionButtons();
+    }
+  }
+
+  function renderRecords() {
+    const listDiv = document.getElementById('record-list');
+    listDiv.innerHTML = '';
+    
+    const myRecords = records.filter(r => r.empId === currentEmpId).reverse();
+    
+    myRecords.forEach(r => {
+      const item = document.createElement('div');
+      item.className = 'record-item';
+      
+      const inTime = r.in || "--:--";
+      const outTime = r.out || "勤務中";
+      
+      item.innerHTML = `
+        <div class="record-info">
+          <strong>${r.date}</strong><br>
+          ${inTime} 〜 ${outTime}
+        </div>
+        <button class="btn-edit" onclick="openEdit(${r.id})">修正</button>
+      `;
+      listDiv.appendChild(item);
+    });
+  }
+
+  function openEdit(recordId) {
+    editingRecordId = recordId;
+    const target = records.find(r => r.id === recordId);
+    
+    document.getElementById('edit-date').value = target.date;
+    document.getElementById('edit-in').value = target.in;
+    document.getElementById('edit-out').value = target.out;
+    
+    document.getElementById('edit-modal').style.display = 'block';
+  }
+
+  function closeEdit() {
+    document.getElementById('edit-modal').style.display = 'none';
+    editingRecordId = null;
+  }
+
+  function saveEdit() {
+    const target = records.find(r => r.id === editingRecordId);
+    if (target) {
+      target.date = document.getElementById('edit-date').value;
+      target.in = document.getElementById('edit-in').value;
+      target.out = document.getElementById('edit-out').value;
+      saveData();
+      closeEdit();
+      renderRecords();
+      updateActionButtons();
+    }
+  }
+
+  function deleteRecord() {
+    if (confirm("本当にこの記録を削除しますか？")) {
+      records = records.filter(r => r.id !== editingRecordId);
+      saveData();
+      closeEdit();
+      renderRecords();
+      updateActionButtons();
+    }
+  }
+
+  function saveData() {
+    localStorage.setItem('kintai_recs', JSON.stringify(records));
+  }
+</script>
+
+</body>
+</html>

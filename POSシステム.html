@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>サウナPOS ＆ 飲食管理（レシート印刷対応版）</title>
+<!-- Firebase Auth と Database の読み込み -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<style>
+  body { font-family: sans-serif; background: #f2f2f7; margin: 0; padding: 20px; color: #333; }
+  
+  /* ログイン画面 */
+  #login-view { display: block; }
+  #pos-view { display: none; }
+  
+  .login-box { background: #fff; padding: 30px; border-radius: 12px; margin: 40px auto; max-width: 400px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+  .login-input { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+  
+  /* タブ切り替えメニュー */
+  .tab-container { display: flex; margin-bottom: 20px; background: #ddd; border-radius: 8px; overflow: hidden; }
+  .tab { flex: 1; padding: 15px; text-align: center; font-weight: bold; cursor: pointer; }
+  .tab.active { background: #007aff; color: white; }
+  
+  .view { display: none; }
+  
+  /* 共通の箱デザイン */
+  .box { background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+  input[type="text"], input[type="number"] { width: 100%; padding: 12px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+  .btn { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; color: white; background: #007aff; border: none; border-radius: 8px; cursor: pointer; }
+  .btn-green { background: #34c759; }
+  .btn-red { background: #ff3b30; }
+  .btn-gray { background: #8e8e93; }
+
+  /* メニュー一覧（グリッド表示） */
+  .menu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
+  .menu-item { border: 2px solid #eee; border-radius: 8px; padding: 10px; text-align: center; cursor: pointer; transition: 0.2s; }
+  .menu-item:active { background: #e0f0ff; border-color: #007aff; }
+  .menu-img { width: 100%; height: 100px; object-fit: cover; border-radius: 5px; background: #eee; margin-bottom: 10px; }
+  .menu-name { font-weight: bold; font-size: 14px; margin: 5px 0; }
+  .menu-price { color: #ff3b30; font-weight: bold; }
+
+  /* カート（注文リスト） */
+  #cart-list { margin-bottom: 15px; border-top: 1px solid #eee; padding-top: 10px; }
+  .cart-item { display: flex; justify-content: space-between; padding: 5px 0; font-size: 16px; }
+  .total-price { font-size: 24px; font-weight: bold; text-align: right; color: #ff3b30; }
+  
+  /* 登録済みメニューリスト */
+  #admin-menu-list li { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
+
+  /* アプリ内プレビューモーダル */
+  #preview-modal {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6); z-index: 1000; overflow-y: auto;
+  }
+  .modal-content {
+    background: #fff; width: 85%; max-width: 400px; margin: 40px auto; padding: 20px;
+    border-radius: 12px; box-sizing: border-box; text-align: left;
+  }
+  .preview-receipt {
+    background: #f9f9f9; padding: 15px; border: 1px dashed #ccc; margin-bottom: 20px; font-size: 14px; line-height: 1.6;
+  }
+  .modal-buttons { display: flex; justify-content: space-between; }
+
+  /* 実際のプリンター出力用（印刷時のみ表示） */
+  #print-receipt-area { display: none; }
+
+  @media print {
+    body { background: white; padding: 0; }
+    #pos-view, #preview-modal { display: none !important; }
+    #print-receipt-area {
+      display: block !important; font-family: sans-serif; font-size: 16px; line-height: 1.6; text-align: left;
+    }
+  }
+</style>
+</head>
+<body>
+
+  <!-- ================= ログイン画面 ================= -->
+  <div id="login-view">
+    <div class="login-box">
+      <h2 style="text-align:center; margin-top:0;">POS・管理ログイン</h2>
+      <input type="email" id="email" class="login-input" placeholder="メールアドレス">
+      <input type="password" id="password" class="login-input" placeholder="パスワード">
+      <button class="btn" onclick="login()">ログイン</button>
+      <p id="error-msg" style="color:red; font-size:14px; text-align:center; display:none;"></p>
+    </div>
+  </div>
+
+
+  <!-- ================= POSメイン画面 ================= -->
+  <div id="pos-view">
+    <!-- タブナビゲーション -->
+    <div class="tab-container">
+      <div class="tab active" onclick="switchTab('view-order', this)">飲食を注文</div>
+      <div class="tab" onclick="switchTab('view-checkout', this)">退店・お会計</div>
+      <div class="tab" onclick="switchTab('view-admin', this)">メニュー設定</div>
+    </div>
+    
+    <div style="text-align:right; margin-bottom:10px;">
+      <button onclick="logout()" style="color:#ff3b30; background:none; border:none; text-decoration:underline; cursor:pointer;">ログアウト</button>
+    </div>
+
+    <!-- 1. 飲食注文画面 -->
+    <div id="view-order" class="view" style="display:block;">
+      <div class="box">
+        <h2>メニューから選ぶ</h2>
+        <div id="menu-grid" class="menu-grid"></div>
+        
+        <div class="box" style="background:#fafafa; border:2px solid #007aff;">
+          <h3>現在の選択内容</h3>
+          <div id="cart-list">カートは空です</div>
+          <div class="total-price">小計: ¥<span id="cart-total">0</span></div>
+          <hr>
+          <p>お客様のバーコードをスキャンして注文を確定</p>
+          <input type="text" id="order-scan" placeholder="バーコードをスキャン...">
+        </div>
+      </div>
+    </div>
+
+
+    <!-- 2. 退店・お会計画面 -->
+    <div id="view-checkout" class="view">
+      <div class="box">
+        <h2>退店処理 ＆ レジ精算</h2>
+        <p>お客様のバーコードをスキャンしてください</p>
+        <input type="text" id="checkout-scan" placeholder="バーコードをスキャン...">
+        
+        <div id="checkout-result-area" style="display:none; margin-top:20px; padding:20px; background:#fffbdd; border:1px solid #e0e0e0; border-radius:8px;">
+          <h3 id="res-name">○○様 のお会計</h3>
+          <p>サウナ基本料金： ¥<span id="res-base">0</span></p>
+          <div id="res-food"></div>
+          <hr>
+          <div class="total-price" style="font-size:28px; margin-bottom:15px;">総合計: ¥<span id="res-total">0</span></div>
+          <button class="btn btn-green" onclick="openReceiptPreview()">レシート（明細）を確認して退店する</button>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- 3. メニュー設定画面 -->
+    <div id="view-admin" class="view">
+      <div class="box">
+        <h2>新しいメニューを登録</h2>
+        <input type="text" id="new-item-name" placeholder="商品名（例：オロポ）">
+        <input type="number" id="new-item-price" placeholder="価格（例：500）">
+        <input type="text" id="new-item-img" placeholder="写真のURL（空欄でも可）">
+        <button class="btn btn-green" onclick="addMenuItem()">メニューに追加する</button>
+      </div>
+      
+      <div class="box">
+        <h3>登録済みのメニュー</h3>
+        <ul id="admin-menu-list" style="list-style:none; padding:0;"></ul>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ================= アプリ内レシートプレビュー（モーダル） ================= -->
+  <div id="preview-modal">
+    <div class="modal-content">
+      <h3 style="text-align:center; margin-top:0;">レシートプレビュー</h3>
+      
+      <div class="preview-receipt" id="preview-receipt-box">
+        <!-- プレビューの中身がここに動的に入ります -->
+      </div>
+
+      <div class="modal-buttons">
+        <button class="btn btn-gray" style="width:48%;" onclick="closePreview()">キャンセル</button>
+        <button class="btn btn-red" style="width:48%;" onclick="printAndCompleteCheckout()">印刷して退店処理</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ================= 実際の印刷用レシートエリア ================= -->
+  <div id="print-receipt-area">
+    <h2 style="text-align:center; margin:0 0 10px 0;">サウナ ご利用明細</h2>
+    <p>発行日時: <span id="print-time"></span></p>
+    <p>お名前: <span id="print-name" style="font-weight:bold; font-size:18px;"></span></p>
+    <p>-----------------------------------</p>
+    <p>■ サウナ基本料金: ¥<span id="print-base">0</span></p>
+    <div id="print-food-list"></div>
+    <p>-----------------------------------</p>
+    <p style="font-size:20px; font-weight:bold;">■ 総合計: ¥<span id="print-total">0</span> (税込)</p>
+    <br><br>
+    <p style="text-align:center;">ご利用ありがとうございました！<br>またのご来店をお待ちしております。</p>
+  </div>
+
+<script>
+  // ▼ ご自身のFirebase設定（鍵）を貼り付けてください ▼
+  const firebaseConfig = {
+  apiKey: "AIzaSyCxqgXMkwbwLHPNNLjKPHivjzhW4wvMuvA",
+  authDomain: "sauna-b8931.firebaseapp.com",
+  databaseURL: "https://sauna-b8931-default-rtdb.firebaseio.com",
+  projectId: "sauna-b8931",
+  storageBucket: "sauna-b8931.firebasestorage.app",
+  messagingSenderId: "62732813314",
+  appId: "1:62732813314:web:21d8a6fc3a3c9043bb531b"
+};
+  // ▲ ここまで ▲
+  
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+  const auth = firebase.auth();
+  const db = firebase.database();
+
+  let menuItems = {};
+  let currentCart = [];
+  let activeTicketId = "";
+  let activeTicketData = null;
+  let calculatedGrandTotal = 0;
+
+  // ログイン管理
+  auth.onAuthStateChanged((user) => {
+    if (user) {
+      document.getElementById('login-view').style.display = 'none';
+      document.getElementById('pos-view').style.display = 'block';
+      startPosSystem();
+    } else {
+      document.getElementById('login-view').style.display = 'block';
+      document.getElementById('pos-view').style.display = 'none';
+    }
+  });
+
+  function login() {
+    const email = document.getElementById('email').value;
+    const pass = document.getElementById('password').value;
+    const errorMsg = document.getElementById('error-msg');
+    
+    auth.signInWithEmailAndPassword(email, pass)
+      .then(() => errorMsg.style.display = 'none')
+      .catch(() => {
+        errorMsg.innerText = "ログインに失敗しました。";
+        errorMsg.style.display = 'block';
+      });
+  }
+
+  function logout() { auth.signOut(); }
+
+  function startPosSystem() {
+    db.ref('sauna/menu').on('value', snapshot => {
+      menuItems = snapshot.val() || {};
+      renderMenuGrid();
+      renderAdminMenu();
+    });
+  }
+
+  function switchTab(tabId, btn) {
+    document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById(tabId).style.display = 'block';
+    btn.classList.add('active');
+    
+    if(tabId === 'view-order') document.getElementById('order-scan').focus();
+    if(tabId === 'view-checkout') document.getElementById('checkout-scan').focus();
+  }
+
+  // 1. メニュー設定
+  function addMenuItem() {
+    const name = document.getElementById('new-item-name').value;
+    const price = parseInt(document.getElementById('new-item-price').value);
+    const img = document.getElementById('new-item-img').value || "https://via.placeholder.com/150?text=No+Image";
+    
+    if(!name || !price) return alert("商品名と価格を入力してください");
+
+    const itemId = "item_" + Date.now();
+    db.ref('sauna/menu/' + itemId).set({ name, price, img })
+      .then(() => {
+        document.getElementById('new-item-name').value = '';
+        document.getElementById('new-item-price').value = '';
+        document.getElementById('new-item-img').value = '';
+        alert("メニューを登録しました");
+      });
+  }
+
+  function deleteMenu(key) {
+    if (confirm("このメニューを削除しますか？")) {
+      db.ref('sauna/menu/' + key).remove();
+    }
+  }
+
+  function renderAdminMenu() {
+    const list = document.getElementById('admin-menu-list');
+    list.innerHTML = '';
+    Object.keys(menuItems).forEach(key => {
+      const item = menuItems[key];
+      list.innerHTML += `<li><span>${item.name} (¥${item.price})</span> <button onclick="deleteMenu('${key}')" style="color:red; background:none; border:none; cursor:pointer;">[削除]</button></li>`;
+    });
+  }
+
+  // 2. 注文処理
+  function renderMenuGrid() {
+    const grid = document.getElementById('menu-grid');
+    grid.innerHTML = '';
+    Object.keys(menuItems).forEach(key => {
+      const item = menuItems[key];
+      grid.innerHTML += `
+        <div class="menu-item" onclick="addToCart('${item.name}', ${item.price})">
+          <img src="${item.img}" class="menu-img">
+          <div class="menu-name">${item.name}</div>
+          <div class="menu-price">¥${item.price}</div>
+        </div>
+      `;
+    });
+  }
+
+  function addToCart(name, price) {
+    currentCart.push({ name, price });
+    updateCartDisplay();
+  }
+
+  function updateCartDisplay() {
+    const list = document.getElementById('cart-list');
+    const totalSpan = document.getElementById('cart-total');
+    if (currentCart.length === 0) {
+      list.innerHTML = 'カートは空です';
+      totalSpan.innerText = '0';
+      return;
+    }
+    list.innerHTML = '';
+    let total = 0;
+    currentCart.forEach(item => {
+      list.innerHTML += `<div class="cart-item"><span>${item.name}</span> <span>¥${item.price}</span></div>`;
+      total += item.price;
+    });
+    totalSpan.innerText = total;
+  }
+
+  document.getElementById('order-scan').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+      const ticketId = this.value.trim();
+      this.value = '';
+      if(currentCart.length === 0) return alert("商品をカートに入れてからスキャンしてください");
+      processOrder(ticketId);
+    }
+  });
+
+  function processOrder(ticketId) {
+    const ticketRef = db.ref('sauna/tickets/' + ticketId);
+    ticketRef.once('value', snapshot => {
+      if (!snapshot.exists()) return alert("無効なバーコードです");
+      const ticketData = snapshot.val();
+      const existingOrders = ticketData.orders || [];
+      const updatedOrders = existingOrders.concat(currentCart);
+
+      ticketRef.update({ orders: updatedOrders }).then(() => {
+        alert(`${ticketData.name} のお会計に飲食代を追加しました`);
+        currentCart = [];
+        updateCartDisplay();
+      });
+    });
+  }
+
+  // 3. お会計・レシートプレビュー処理
+  document.getElementById('checkout-scan').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+      activeTicketId = this.value.trim();
+      this.value = '';
+      loadCheckoutData(activeTicketId);
+    }
+  });
+
+  function loadCheckoutData(ticketId) {
+    db.ref('sauna/tickets/' + ticketId).once('value', snapshot => {
+      if (!snapshot.exists()) return alert("無効なバーコードです");
+      
+      activeTicketData = snapshot.val();
+      if(activeTicketData.status === "out") return alert("すでに退店済みのお客様です");
+
+      document.getElementById('res-name').innerText = activeTicketData.name + " のお会計";
+      document.getElementById('res-base').innerText = activeTicketData.basePrice || 0;
+      
+      const foodDiv = document.getElementById('res-food');
+      foodDiv.innerHTML = '';
+      let foodTotal = 0;
+
+      if(activeTicketData.orders && activeTicketData.orders.length > 0) {
+        foodDiv.innerHTML = '<h4>追加の飲食代：</h4>';
+        activeTicketData.orders.forEach(order => {
+          foodDiv.innerHTML += `<div class="cart-item"><span>${order.name}</span> <span>¥${order.price}</span></div>`;
+          foodTotal += order.price;
+        });
+      }
+
+      calculatedGrandTotal = (activeTicketData.basePrice || 0) + foodTotal;
+      document.getElementById('res-total').innerText = calculatedGrandTotal;
+      
+      document.getElementById('checkout-result-area').style.display = 'block';
+    });
+  }
+
+  // プレビュー画面を開く
+  function openReceiptPreview() {
+    if (!activeTicketData) return;
+
+    const now = new Date();
+    const timeStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    // プレビュー画面（モーダル）用のHTMLを組み立て
+    let previewHtml = `
+      <p style="text-align:center; font-weight:bold; margin:0 0 10px 0;">サウナ ご利用明細</p>
+      <p style="font-size:12px; margin:2px 0;">日時: ${timeStr}</p>
+      <p style="font-size:14px; margin:2px 0; font-weight:bold;">お名前: ${activeTicketData.name}</p>
+      <p style="margin:5px 0;">-------------------------</p>
+      <p style="margin:2px 0;">基本料金: ¥${activeTicketData.basePrice || 0}</p>
+    `;
+
+    let printFoodHtml = '';
+    if(activeTicketData.orders && activeTicketData.orders.length > 0) {
+      previewHtml += `<p style="margin:5px 0; font-weight:bold; font-size:13px;">[飲食メニュー]</p>`;
+      activeTicketData.orders.forEach(order => {
+        previewHtml += `<p style="margin:2px 0; padding-left:10px;">・${order.name} ¥${order.price}</p>`;
+        printFoodHtml += `<p>・${order.name}: ¥${order.price}</p>`;
+      });
+    }
+
+    previewHtml += `
+      <p style="margin:5px 0;">-------------------------</p>
+      <p style="font-size:16px; font-weight:bold; margin:5px 0;">総合計: ¥${calculatedGrandTotal} (税込)</p>
+    `;
+
+    document.getElementById('preview-receipt-box').innerHTML = previewHtml;
+
+    // 実際の印刷用データエリアにもセット
+    document.getElementById('print-time').innerText = timeStr;
+    document.getElementById('print-name').innerText = activeTicketData.name;
+    document.getElementById('print-base').innerText = activeTicketData.basePrice || 0;
+    document.getElementById('print-food-list').innerHTML = printFoodHtml;
+    document.getElementById('print-total').innerText = calculatedGrandTotal;
+
+    // モーダルを表示
+    document.getElementById('preview-modal').style.display = 'block';
+  }
+
+  function closePreview() {
+    document.getElementById('preview-modal').style.display = 'none';
+  }
+
+  // 印刷して退店処理を完了する
+  function printAndCompleteCheckout() {
+    // 1. OSの印刷画面を呼び出す
+    window.print();
+
+    // 2. データベースのステータスを「退店済」に更新
+    db.ref('sauna/tickets/' + activeTicketId).update({ status: "out" });
+
+    // 3. 混雑状況（現在の人数）を -1 する
+    const countRef = db.ref('sauna/currentPeople');
+    countRef.once('value', c => countRef.set(Math.max((c.val() || 0) - 1, 0)));
+
+    alert("精算と退店処理が完了しました。");
+    
+    // 画面をリセット
+    closePreview();
+    document.getElementById('checkout-result-area').style.display = 'none';
+    activeTicketId = "";
+    activeTicketData = null;
+  }
+</script>
+</body>
+</html>

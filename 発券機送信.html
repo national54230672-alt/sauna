@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>人数管理リモコン</title>
+<!-- Firebaseの読み込み -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<style>
+  body { font-family: sans-serif; text-align: center; background-color: #f2f2f7; padding: 20px; }
+  h1 { color: #333; }
+  .count-display { font-size: 80px; font-weight: bold; margin: 20px 0; }
+  .btn { width: 90%; padding: 20px; font-size: 24px; font-weight: bold; color: white; border: none; border-radius: 12px; margin-bottom: 20px; cursor: pointer; }
+  .btn-plus { background-color: #007aff; }
+  .btn-minus { background-color: #ff3b30; }
+</style>
+</head>
+<body>
+
+  <h1>現在の入室人数</h1>
+  <div class="count-display"><span id="remote-count">0</span> 人</div>
+  
+  <button class="btn btn-plus" onclick="changeCount(1)">＋1人 入店</button>
+  <button class="btn btn-minus" onclick="changeCount(-1)">－1人 退店</button>
+
+<script>
+  // ▼ステップ2と同じFirebase設定を貼り付けます▼
+  const firebaseConfig = {
+    apiKey: "AIzaSyCxqgXMkwbwLHPNNLjKPHivjzhW4wvMuvA",
+    authDomain: "sauna-b8931.firebaseapp.com",
+    databaseURL: "https://sauna-b8931-default-rtdb.firebaseio.com",
+    projectId: "sauna-b8931",
+    storageBucket: "sauna-b8931.firebasestorage.app",
+    messagingSenderId: "62732813314",
+    appId: "1:62732813314:web:21d8a6fc3a3c9043bb531b"
+  };firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const countRef = db.ref('sauna/currentPeople');
+
+  // 現在の人数を画面に表示（クラウドから取得）
+  countRef.on('value', (snapshot) => {
+    let currentPeople = snapshot.val();
+    if (currentPeople === null) currentPeople = 0;
+    document.getElementById('remote-count').innerText = currentPeople;
+  });
+
+  // ボタンを押した時にクラウドの数値を増減させる関数
+  function changeCount(amount) {
+    countRef.once('value', (snapshot) => {
+      let currentPeople = snapshot.val();
+      if (currentPeople === null) currentPeople = 0;
+      
+      let newCount = currentPeople + amount;
+      if (newCount < 0) newCount = 0; // 0未満にはしない
+      
+      // クラウドに新しい人数を上書き保存
+      countRef.set(newCount);
+    });
+  }
+</script>
+</body>
+</html>

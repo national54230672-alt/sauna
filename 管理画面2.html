@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>スキャン＆入退店管理</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<style>
+  body { font-family: sans-serif; background: #f2f2f7; margin: 0; padding: 20px; }
+  .header { display: flex; justify-content: space-between; align-items: center; }
+  
+  /* スキャン入力欄（バーコードリーダーの入力を受け付ける） */
+  #scan-input { width: 100%; padding: 15px; font-size: 20px; box-sizing: border-box; border: 2px solid #007aff; border-radius: 8px; margin-bottom: 20px; }
+  
+  .status-box { background: #fff; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+  .people-count { font-size: 36px; font-weight: bold; color: #007aff; }
+  
+  .customer-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
+  .in-store { color: #34c759; font-weight: bold; }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>入退店スキャナー</h1>
+    <div class="people-count">店内: <span id="current-count">0</span> 人</div>
+  </div>
+
+  <!-- バーコードリーダーで読み取ると、自動的にここに数字が入力されEnterが押されます -->
+  <input type="text" id="scan-input" placeholder="ここを選択してバーコードをスキャン..." autofocus>
+
+  <div class="status-box">
+    <h3>現在滞在中のお客様リスト</h3>
+    <div id="customer-list"></div>
+  </div>
+
+<script>
+  // ▼ ご自身のFirebase設定に書き換えてください ▼
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY", authDomain: "YOUR_PROJECT_ID.firebaseapp.com", databaseURL: "https://YOUR_DATABASE_NAME.firebaseio.com", projectId: "YOUR_PROJECT_ID",
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  
+  const scanInput = document.getElementById('scan-input');
+  
+  // バーコードリーダーの入力（Enterキー）を検知
+  scanInput.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+      const ticketId = scanInput.value.trim();
+      scanInput.value = ''; // 入力欄をクリア
+      if(ticketId !== "") {
+        processScan(ticketId); // スキャン処理を実行
+      }
+    }
+  });
+
+  // スキャンされた番号をもとに入退店を処理する関数
+  function processScan(ticketId) {
+    const ticketRef = db.ref('sauna/tickets/' + ticketId);
+    const countRef = db.ref('sauna/currentPeople');
+
+    ticketRef.once('value', snapshot => {
+      const data = snapshot.val();
+      
+      if (!data) {
+        alert("エラー: 登録されていないバーコードです");
+        return;
+      }
+
+      if (data.status === "issued") {
+        // 発券済 → 入店へ変更し、人数を+1
+        ticketRef.update({ status: "in" });
+        countRef.once('value', c => countRef.set((c.val() || 0) + 1));
+        alert(`${data.name} が入店しました`);
+        
+      } else if (data.status === "in") {
+        // 入店中 → 退店済へ変更し、人数を-1
+        ticketRef.update({ status: "out" });
+        countRef.once('value', c => countRef.set(Math.max((c.val() || 0) - 1, 0)));
+        alert(`${data.name} が退店しました`);
+        
+      } else if (data.status === "out") {
+        alert("すでに退店済みのお客様です");
+      }
+    });
+  }
+
+  // 滞在中のお客様リストと人数のリアルタイム表示
+  db.ref('sauna/tickets').on('value', snapshot => {
+    const listDiv = document.getElementById('customer-list');
+    listDiv.innerHTML = '';
+    
+    let inStoreCount = 0; // 入店中人数のカウントアップ
+
+    snapshot.forEach(child => {
+      const data = child.val();
+      // ステータスが "in"（入店中）の人だけを表示
+      if (data.status === "in") {
+        inStoreCount++;
+        const item = document.createElement('div');
+        item.className = 'customer-item';
+        item.innerHTML = `<span>${data.name}</span> <span class="in-store">利用中</span>`;
+        listDiv.appendChild(item);
+      }
+    });
+    
+    // 現在の人数表示を更新（バックアップ用）
+    document.getElementById('current-count').innerText = inStoreCount;
+    // Firebaseの人数データも強制的にリストの数と同期させる（ズレ防止）
+    db.ref('sauna/currentPeople').set(inStoreCount);
+  });
+</script>
+</body>
+</html>

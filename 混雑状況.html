@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>混雑状況・統合管理パネル（セキュア版）</title>
+<!-- Firebaseの読み込み (Auth機能を追加) -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    background-color: #f2f2f7; color: #333; margin: 0; padding: 15px;
+  }
+  h1 { font-size: 20px; text-align: center; margin-bottom: 20px; }
+  
+  /* 画面切り替え用 */
+  #login-view { display: block; }
+  #admin-view { display: none; }
+
+  /* ログイン画面のデザイン */
+  .login-box {
+    background: #fff; padding: 30px; border-radius: 12px; margin: 40px auto;
+    max-width: 400px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+  }
+  .login-input {
+    width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ccc;
+    border-radius: 8px; font-size: 16px; box-sizing: border-box;
+  }
+  .btn-login {
+    width: 100%; padding: 15px; font-size: 18px; font-weight: bold; color: white;
+    background-color: #007aff; border: none; border-radius: 8px; cursor: pointer;
+  }
+
+  /* 管理画面のデザイン */
+  .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .btn-logout { background: transparent; color: #ff3b30; border: none; font-size: 14px; text-decoration: underline; cursor: pointer; }
+
+  .section {
+    background: #fff; padding: 20px; border-radius: 12px; margin-bottom: 20px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  }
+  .section-title { font-size: 16px; font-weight: bold; border-bottom: 2px solid #eee; padding-bottom: 8px; margin-top: 0; margin-bottom: 15px; }
+  
+  .count-display { font-size: 48px; font-weight: bold; text-align: center; margin: 10px 0; color: #007aff; }
+  .btn-group { display: flex; justify-content: space-between; }
+  .btn { width: 48%; padding: 15px; font-size: 18px; font-weight: bold; color: white; border: none; border-radius: 8px; cursor: pointer; }
+  .btn-plus { background-color: #007aff; }
+  .btn-minus { background-color: #ff3b30; }
+
+  .setting-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; font-size: 16px; }
+  .setting-input { width: 80px; padding: 8px; font-size: 18px; text-align: center; border: 1px solid #ccc; border-radius: 5px; }
+  .btn-save { width: 100%; padding: 12px; font-size: 16px; background-color: #34c759; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+
+  #preview-board { border-radius: 12px; padding: 30px 15px; text-align: center; color: white; transition: background-color 0.3s ease; }
+  #preview-text { font-size: 32px; font-weight: bold; margin: 0 0 10px 0; }
+  #preview-count { font-size: 18px; color: #eee; margin: 0; }
+  
+  .status-empty { background-color: #34c759; }
+  .status-crowded { background-color: #ff9500; }
+  .status-full { background-color: #ff3b30; }
+</style>
+</head>
+<body>
+
+  <!-- ================= ログイン画面 ================= -->
+  <div id="login-view">
+    <div class="login-box">
+      <h2 style="text-align:center; margin-top:0;">スタッフログイン</h2>
+      <input type="email" id="email" class="login-input" placeholder="メールアドレス">
+      <input type="password" id="password" class="login-input" placeholder="パスワード">
+      <button class="btn-login" onclick="login()">ログイン</button>
+      <p id="error-msg" style="color:red; font-size:14px; text-align:center; display:none;"></p>
+    </div>
+  </div>
+
+
+  <!-- ================= 管理画面 ================= -->
+  <div id="admin-view">
+    <div class="header-bar">
+      <h1 style="margin:0;">⚙️ 管理パネル</h1>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
+    </div>
+
+    <!-- 入退店管理 -->
+    <div class="section">
+      <h2 class="section-title">入退店コントロール</h2>
+      <div class="count-display"><span id="current-people">0</span> 人</div>
+      <div class="btn-group">
+        <button class="btn btn-minus" onclick="changeCount(-1)">－1 退店</button>
+        <button class="btn btn-plus" onclick="changeCount(1)">＋1 入店</button>
+      </div>
+    </div>
+
+    <!-- 設定 -->
+    <div class="section">
+      <h2 class="section-title">混雑・満員の設定</h2>
+      <div class="setting-row">
+        <label>「やや混雑」にする人数</label>
+        <div><input type="number" id="input-crowded" class="setting-input"> 人〜</div>
+      </div>
+      <div class="setting-row">
+        <label>「満員」にする人数</label>
+        <div><input type="number" id="input-full" class="setting-input"> 人〜</div>
+      </div>
+      <button class="btn-save" onclick="saveSettings()">設定を保存・反映</button>
+    </div>
+
+    <!-- プレビュー -->
+    <div class="section">
+      <h2 class="section-title">実際の表示プレビュー</h2>
+      <div id="preview-board" class="status-empty">
+        <h3 id="preview-text">空きあり</h3>
+        <p id="preview-count">現在: <span id="preview-num">0</span>人</p>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ▼ ご自身のFirebase設定を貼り付けてください ▼
+  const firebaseConfig = {
+  apiKey: "AIzaSyCxqgXMkwbwLHPNNLjKPHivjzhW4wvMuvA",
+  authDomain: "sauna-b8931.firebaseapp.com",
+  databaseURL: "https://sauna-b8931-default-rtdb.firebaseio.com",
+  projectId: "sauna-b8931",
+  storageBucket: "sauna-b8931.firebasestorage.app",
+  messagingSenderId: "62732813314",
+  appId: "1:62732813314:web:21d8a6fc3a3c9043bb531b"
+};
+  // ▲ ここまで ▲
+
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+  const auth = firebase.auth();
+  const db = firebase.database();
+
+  let countRef, settingsRef;
+  let currentPeople = 0;
+  let limitCrowded = 15;
+  let limitFull = 30;
+
+  // ===== ログイン状態の監視 =====
+  auth.onAuthStateChanged((user) => {
+    if (user) {
+      // ログイン成功時：管理画面を表示
+      document.getElementById('login-view').style.display = 'none';
+      document.getElementById('admin-view').style.display = 'block';
+      startAdmin(); // データの読み込み開始
+    } else {
+      // 未ログイン時：ログイン画面を表示
+      document.getElementById('login-view').style.display = 'block';
+      document.getElementById('admin-view').style.display = 'none';
+    }
+  });
+
+  // ===== ログイン処理 =====
+  function login() {
+    const email = document.getElementById('email').value;
+    const pass = document.getElementById('password').value;
+    const errorMsg = document.getElementById('error-msg');
+    
+    auth.signInWithEmailAndPassword(email, pass)
+      .then(() => {
+        errorMsg.style.display = 'none';
+      })
+      .catch((error) => {
+        errorMsg.innerText = "メールアドレスかパスワードが間違っています。";
+        errorMsg.style.display = 'block';
+      });
+  }
+
+  // ===== ログアウト処理 =====
+  function logout() {
+    auth.signOut();
+  }
+
+  // ===== 管理機能（ログイン時のみ実行） =====
+  function startAdmin() {
+    countRef = db.ref('sauna/currentPeople');
+    settingsRef = db.ref('sauna/settings');
+
+    countRef.on('value', (snapshot) => {
+      currentPeople = snapshot.val() || 0;
+      document.getElementById('current-people').innerText = currentPeople;
+      document.getElementById('preview-num').innerText = currentPeople;
+      updatePreview();
+    });
+
+    settingsRef.on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        limitCrowded = data.limitCrowded || 15;
+        limitFull = data.limitFull || 30;
+        document.getElementById('input-crowded').value = limitCrowded;
+        document.getElementById('input-full').value = limitFull;
+      }
+      updatePreview();
+    });
+  }
+
+  function changeCount(amount) {
+    let newCount = currentPeople + amount;
+    if (newCount < 0) newCount = 0;
+    countRef.set(newCount).catch(err => alert("権限がありません。ログインし直してください。"));
+  }
+
+  function saveSettings() {
+    const newCrowded = parseInt(document.getElementById('input-crowded').value) || 15;
+    const newFull = parseInt(document.getElementById('input-full').value) || 30;
+    
+    settingsRef.set({
+      limitCrowded: newCrowded,
+      limitFull: newFull
+    }).then(() => {
+      alert("設定を保存しました。");
+    }).catch(err => alert("権限がありません。ログインし直してください。"));
+  }
+
+  function updatePreview() {
+    const board = document.getElementById('preview-board');
+    const text = document.getElementById('preview-text');
+    board.className = ''; 
+
+    if (currentPeople >= limitFull) {
+      text.innerText = "満員です";
+      board.classList.add('status-full');
+    } else if (currentPeople >= limitCrowded) {
+      text.innerText = "やや混雑";
+      board.classList.add('status-crowded');
+    } else {
+      text.innerText = "空きあり";
+      board.classList.add('status-empty');
+    }
+  }
+</script>
+</body>
+</html>

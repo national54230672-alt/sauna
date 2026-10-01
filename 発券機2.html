@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>サウナ セルフ受付・発券機</title>
+<!-- Firebase と Barcode生成ライブラリの読み込み -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    background-color: #f2f2f7; text-align: center; margin: 0; padding: 20px; color: #333;
+  }
+  .screen { display: none; background: #fff; max-width: 450px; margin: 20px auto; padding: 30px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+  .screen.active { display: block; }
+
+  h1 { font-size: 24px; margin-bottom: 20px; color: #004e92; }
+  p { font-size: 16px; color: #666; }
+
+  /* タッチパネル用大きめボタン */
+  .btn-choice {
+    display: block; width: 100%; padding: 25px; margin: 15px 0; font-size: 20px; font-weight: bold;
+    color: white; border: none; border-radius: 12px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  }
+  .btn-blue { background-color: #007aff; }
+  .btn-green { background-color: #34c759; }
+  .btn-gray { background-color: #8e8e93; }
+  .btn-next { background-color: #ff9500; margin-top: 30px; }
+
+  /* 確認画面のスタイル */
+  .confirm-box {
+    background: #f9f9f9; padding: 20px; border-radius: 10px; text-align: left; margin: 20px 0; font-size: 18px; line-height: 1.8;
+  }
+  .confirm-box span { font-weight: bold; color: #000; }
+
+  /* 実際のプリンター出力用（印刷時のみ表示） */
+  #print-area { display: none; }
+
+  @media print {
+    body { background: white; margin: 0; padding: 0; }
+    .screen { display: none !important; }
+    #print-area {
+      display: block !important; text-align: left; font-family: sans-serif; padding: 10px;
+    }
+    .print-title { font-size: 20px; text-align: center; font-weight: bold; margin-bottom: 10px; }
+    .print-exit-box {
+      border: 3px solid #000; padding: 15px; text-align: center; margin: 15px 0;
+    }
+    .print-exit-time { font-size: 32px; font-weight: bold; display: block; margin-top: 5px; }
+  }
+</style>
+</head>
+<body>
+
+  <!-- ================= ① スタート画面（チェックイン） ================= -->
+  <div id="screen-welcome" class="screen active">
+    <h1>プライベートサウナ</h1>
+    <p>ご来店ありがとうございます。<br>画面をタッチして受付を開始してください。</p>
+    <button class="btn-choice btn-blue" style="margin-top: 40px;" onclick="goToCourse()">チェックインする</button>
+  </div>
+
+
+  <!-- ================= ② コース選択画面 ================= -->
+  <div id="screen-course" class="screen">
+    <h1>コースをお選びください</h1>
+    <button class="btn-choice btn-blue" onclick="selectCourse('3hours', 1500, '3時間コース')">
+      3時間コース<br><span style="font-size:24px;">1,500円</span>
+    </button>
+    <button class="btn-choice btn-green" onclick="selectCourse('free', 3000, 'フリータイム')">
+      フリータイム<br><span style="font-size:24px;">3,000円</span>
+    </button>
+    <button class="btn-choice btn-gray" style="padding:15px; font-size:16px;" onclick="backToWelcome()">◀ 戻る</button>
+  </div>
+
+
+  <!-- ================= ③ ドリンクバー選択画面 ================= -->
+  <div id="screen-drink" class="screen">
+    <h1>ドリンクバーの利用</h1>
+    <p>ご一緒にドリンクバー（＋300円）はいかがですか？</p>
+    <button class="btn-choice btn-green" onclick="selectDrink(true)">利用する（＋300円）</button>
+    <button class="btn-choice btn-gray" onclick="selectDrink(false)">利用しない</button>
+  </div>
+
+
+  <!-- ================= ④ 確認画面 ================= -->
+  <div id="screen-confirm" class="screen">
+    <h1>ご注文内容の確認</h1>
+    <div class="confirm-box">
+      <div>コース： <span id="conf-course"></span></div>
+      <div>ドリンクバー： <span id="conf-drink"></span></div>
+      <hr style="border:0; border-top:1px solid #ddd; margin:10px 0;">
+      <div style="font-size:22px; color:#ff3b30;">合計料金： <span id="conf-total">0</span>円</div>
+    </div>
+    <p style="font-size: 14px; font-weight: bold; color: #333;">内容がよろしければ「次へ」ボタンを押してください</p>
+    <button class="btn-choice btn-next" onclick="executeIssue()">次へ（発券する）</button>
+    <button class="btn-choice btn-gray" style="padding:15px; font-size:16px;" onclick="goToCourse()">◀ 選び直す</button>
+  </div>
+
+
+  <!-- ================= 実際の印刷用レシートデータ ================= -->
+  <div id="print-area">
+    <div class="print-title">サウナ ご利用券</div>
+    <p>管理番号: <span id="print-num" style="font-weight:bold;"></span></p>
+    <p>発券日時: <span id="print-time"></span></p>
+    <p>コース: <span id="print-course-name"></span></p>
+    <p>オプション: <span id="print-drink-name"></span></p>
+    <p>料金合計: ¥<span id="print-total-price"></span></p>
+    
+    <!-- 退店時間を大きく枠囲みして記載 -->
+    <div class="print-exit-box">
+      <span>【 退店予定時間 】</span>
+      <span class="print-exit-time" id="print-exit-time"></span>
+    </div>
+
+    <div style="text-align: center; margin-top: 15px;">
+      <!-- バーコード描画エリア -->
+      <svg id="print-barcode"></svg>
+    </div>
+    <p style="font-size: 12px; text-align: center; margin-top: 10px;">※お帰りの際にお持ちください。</p>
+  </div>
+
+<script>
+  // ▼ ご自身のFirebase設定（鍵）を貼り付けてください ▼
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY", authDomain: "YOUR_PROJECT_ID.firebaseapp.com", databaseURL: "https://YOUR_DATABASE_NAME.firebaseio.com", projectId: "YOUR_PROJECT_ID",
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  // 選択内容を一時保存する変数
+  let selectedCourseKey = "";
+  let selectedCourseName = "";
+  let basePrice = 0;
+  let hasDrink = false;
+  let drinkPrice = 0;
+
+  // 画面を切り替えるヘルパー関数
+  function showScreen(screenId) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(screenId).classList.add('active');
+  }
+
+  function goToCourse() { showScreen('screen-course'); }
+  function backToWelcome() { showScreen('screen-welcome'); }
+
+  // コース選択完了
+  function selectCourse(key, price, name) {
+    selectedCourseKey = key;
+    basePrice = price;
+    selectedCourseName = name;
+    showScreen('screen-drink'); // 次のドリンク選択へ
+  }
+
+  // ドリンク選択完了 ➔ 確認画面へ
+  function selectDrink(flag) {
+    hasDrink = flag;
+    drinkPrice = flag ? 300 : 0;
+
+    // 確認画面に反映
+    document.getElementById('conf-course').innerText = `${selectedCourseName} (¥${basePrice})`;
+    document.getElementById('conf-drink').innerText = flag ? "ドリンクバー利用 (¥300)" : "なし (¥0)";
+    document.getElementById('conf-total').innerText = basePrice + drinkPrice;
+
+    showScreen('screen-confirm');
+  }
+
+  // 発券・クラウド保存・印刷の実行
+  function executeIssue() {
+    const ticketId = Date.now().toString(); // 一意のバーコード用ID
+    const now = new Date();
+    
+    // 日時フォーマット
+    const formatTime = (d) => `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    const issueTimeStr = formatTime(now);
+
+    // 退店時間の計算（3時間コースなら＋3時間、フリータイムなら「フリータイム」表記）
+    let exitTimeStr = "";
+    if (selectedCourseKey === '3hours') {
+      const exitDate = new Date(now.getTime() + (3 * 60 * 60 * 1000));
+      exitTimeStr = formatTime(exitDate);
+    } else {
+      exitTimeStr = "フリータイム";
+    }
+
+    const totalPrice = basePrice + drinkPrice;
+    const customerName = "お客様 (" + selectedCourseName + ")";
+
+    // 1. Firebaseにデータを登録（受付完了＆入店中ステータスにする）
+    db.ref('sauna/tickets/' + ticketId).set({
+      name: customerName,
+      basePrice: totalPrice, // POSレジでの合算対象にする場合
+      status: "in",          // すでにチェックイン済みにする
+      orders: hasDrink ? [{ name: "ドリンクバー", price: 300 }] : []
+    }).then(() => {
+      
+      // 2. 混雑状況（現在の人数）を＋1する
+      const countRef = db.ref('sauna/currentPeople');
+      countRef.once('value', c => countRef.set((c.val() || 0) + 1));
+
+      // 3. 印刷用エリアにデータを流し込む
+      document.getElementById('print-num').innerText = ticketId.slice(-4); // 下4桁を管理番号風に表示
+      document.getElementById('print-time').innerText = issueTimeStr;
+      document.getElementById('print-course-name').innerText = selectedCourseName + ` (¥${basePrice})`;
+      document.getElementById('print-drink-name').innerText = hasDrink ? "ドリンクバー (¥300)" : "なし";
+      document.getElementById('print-total-price').innerText = totalPrice;
+      document.getElementById('print-exit-time').innerText = exitTimeStr;
+
+      // 4. バーコードを生成して描画
+      JsBarcode("#print-barcode", ticketId, { width: 2, height: 50, displayValue: true });
+
+      // 5. 印刷ダイアログを呼び出す（Bluetooth/AirPrint対応プリンターへ出力）
+      window.print();
+
+      // 6. 最初の画面に戻る
+      setTimeout(() => {
+        showScreen('screen-welcome');
+      }, 1000);
+    });
+  }
+</script>
+</body>
+</html>
